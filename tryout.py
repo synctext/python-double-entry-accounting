@@ -163,6 +163,8 @@ if __name__ == "__main__":
     book.add_journal(j)
     book2balance(book, ['BTC'])
     
+    print "\nNow let's exchange 4.5 BTC between C and A. Result:"
+    
     """
     Exchange EUR and BTC between A and C
     
