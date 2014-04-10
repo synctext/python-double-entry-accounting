@@ -7,8 +7,10 @@ Persistance will be in memory. Each time all transactions have to be replayed.
 from decimal import Decimal as D
 
 DEFAULT_CURRENCIES = ['EUR']
-FEE = D(0.006)
-
+COSTS = {
+    'trade': D('0.006'),
+    'commission': D('0.015'),
+}
 class Book(object):
     
     def __init__(self):
@@ -116,11 +118,46 @@ class Journal(object):
         return iter(self._records)
     
 def book2balance(book, currencies):
+    print "BALANCE SHEET"
     for asset in currencies:
         print asset
         for account in book._accounts:
             if asset in account._balance:
-                print account, "%10.4f" % account._balance[asset]
+                if account._type is Account.TYPE_LIABILITY:
+                    print account, "              %10.4f" % account._balance[asset]
+                elif account._type is Account.TYPE_ASSET:
+                    print account, "%10.4f" % account._balance[asset]
+        income = book2income(book, asset)
+        if income >= D('0'):
+            print "---- Income          ", "              %10.4f" % income
+        else:
+            print "---- Loss            ", "%10.4f" % -income
+
+def book2income(book, asset):
+    result = D('0')
+    for account in book._accounts:
+        if asset in account._balance:
+            if account._type is Account.TYPE_INCOME:
+                result += account._balance[asset]
+            elif account._type is Account.TYPE_EXPENSE:
+                result =+ account._balance[asset]
+    return result
+
+def book2profitloss(book, currencies):
+    print "PROFIT LOSS STATEMENT"
+    for asset in currencies:
+        print asset
+        for account in book._accounts:
+            if asset in account._balance:
+                if account._type is Account.TYPE_INCOME:
+                    print account, "              %10.4f" % account._balance[asset]
+                elif account._type is Account.TYPE_EXPENSE:
+                    print account, "%10.4f" % account._balance[asset]
+        income = book2income(book, asset)
+        if income >= D('0'):
+            print "---- Income          ", "              %10.4f" % income
+        else:
+            print "---- Loss            ", "%10.4f" % -income
 
 if __name__ == "__main__":
     """
@@ -132,16 +169,22 @@ if __name__ == "__main__":
     ** credit A for 500 EUR
     * print balance report
     """
+    print "\nUser A deposits EUR 500:"
     book = Book()
-    a = Account('Account A', Account.TYPE_LIABILITY, '1400')
+    z = Account('Inkomsten handel', Account.TYPE_INCOME, '9200')
+    a = Account('Account A', Account.TYPE_LIABILITY, '1401')
     b = Account('ING7197307', Account.TYPE_ASSET, '1200')
     book.add_account(a, ['EUR', 'BTC'])
     book.add_account(b)
+    book.add_account(z, ['EUR', 'BTC'])
     # Deposit EUR 500
     j = Journal()
     j.add_record(b, D('500'), 0, 'EUR', 'deposit 500 eur to user A')
     j.add_record(a, 0, D('500'), 'EUR', 'deposit 500 eur to user A')
+    
+    
     book.add_journal(j)
+    book._accounts.sort(key=lambda x:x._code)
     book2balance(book, ['EUR'])
     
     """
@@ -152,7 +195,7 @@ if __name__ == "__main__":
     ** credit C for 10 BTC
     * print balance report
     """
-    c = Account('Account C', Account.TYPE_LIABILITY, '1401')
+    c = Account('Account C', Account.TYPE_LIABILITY, '1402')
     d = Account('Hotwallet', Account.TYPE_ASSET, '1201')
     book.add_account(c, ['EUR', 'BTC'])
     book.add_account(d, ['BTC'])
@@ -161,9 +204,9 @@ if __name__ == "__main__":
     j.add_record(d, D('10'), 0, 'BTC', 'deposit 10 btc to user C')
     j.add_record(c, 0, D('10'), 'BTC', 'deposit 10 btc to user C')
     book.add_journal(j)
-    book2balance(book, ['BTC'])
+    book._accounts.sort(key=lambda x:x._code)
+    book2balance(book, ['EUR', 'BTC'])
     
-    print "\nNow let's exchange 4.5 BTC between C and A. Result:"
     
     """
     Exchange EUR and BTC between A and C
@@ -181,19 +224,38 @@ if __name__ == "__main__":
     ** apply BTC fee to A
     * print balance report
     """
-    f = Account('Exchange fees', Account.TYPE_INCOME, '8400')
+    rate = D('70.3')
+    print "\nNow let's exchange 4.5 BTC between C and A. Exchange rate %.2f EUR/BTC:" % rate
+    
+    f = Account('Exchange fees', Account.TYPE_EXPENSE, '8400')
+    g = Account('Commission', Account.TYPE_INCOME, '8400')
     book.add_account(f, ['EUR', 'BTC'])
     # Deposit BTC 10
     j = Journal()
-    amount_eur = D(320.85)
-    amount_btc = D(4.5)
-    j.add_record(c, amount_btc, 0, 'BTC', 'exchange 4.5 BTC')
-    j.add_record(c, 0, amount_eur, 'EUR', 'exchange 4.5 BTC')
-    j.add_record(a, amount_eur, 0, 'EUR', 'exchange 4.5 BTC')
-    j.add_record(a, 0, amount_btc, 'BTC', 'exchange 4.5 BTC')
-    j.add_record(c, amount_eur*FEE, 0, 'EUR', 'fee: exchange 4.5 BTC')
-    j.add_record(f, 0, amount_eur*FEE, 'EUR', 'fee: exchange 4.5 BTC')
-    j.add_record(a, amount_btc*FEE, 0, 'BTC', 'fee: exchange 4.5 BTC')
-    j.add_record(f, 0, amount_btc*FEE, 'BTC', 'fee: exchange 4.5 BTC')
+    amount_eur = D('320.85')
+    amount_btc = D('4.5')
+    title = 'exchange 4.5 BTC at %.2f EUR/BTC' % rate
+    
+    # Asset/Liability lines
+    j.add_record(c, amount_btc, 0, 'BTC', title)
+    j.add_record(a, 0, amount_btc, 'BTC', title)
+    j.add_record(a, amount_eur, 0, 'EUR', title)
+    j.add_record(c, 0, amount_eur, 'EUR', title)
+    # Apply commission
+    commission = COSTS['commission'] * amount_btc
+    j.add_record(c, commission, 0, 'BTC', title)
+    j.add_record(z, 0, commission, 'BTC', title)
+    commission = COSTS['commission'] * amount_eur
+    j.add_record(c, commission, 0, 'EUR', title)
+    j.add_record(z, 0, commission, 'EUR', title)
+    
+    fee_btc = COSTS['trade'] * amount_btc
+    #j.add_record(c, amount_eur*FEE, 0, 'EUR')
+    #j.add_record(f, 0, amount_eur*FEE, 'EUR')
+    #j.add_record(a, amount_btc*FEE, 0, 'BTC')
+    #j.add_record(f, 0, amount_btc*FEE, 'BTC')
     book.add_journal(j)
+    book._accounts.sort(key=lambda x:x._code)
     book2balance(book, ['EUR', 'BTC'])
+    print ""
+    book2profitloss(book, ['EUR', 'BTC'])
